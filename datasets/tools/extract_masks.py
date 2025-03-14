@@ -123,6 +123,16 @@ if __name__ == "__main__":
         sky_mask_dir = os.path.join(args.data_root, scene_id, "sky_masks")
         if not os.path.exists(sky_mask_dir):
             os.makedirs(sky_mask_dir)
+
+        # create mask dir
+        road_mask_dir = os.path.join(args.data_root, scene_id, "road_masks")
+        if not os.path.exists(road_mask_dir):
+            os.makedirs(road_mask_dir)
+
+        # create mask dir
+        building_mask_dir = os.path.join(args.data_root, scene_id, "building_masks")
+        if not os.path.exists(building_mask_dir):
+            os.makedirs(building_mask_dir)
         
         # create dynamic mask dir
         if args.process_dynamic_mask:
@@ -162,6 +172,14 @@ if __name__ == "__main__":
             # save sky mask
             sky_mask = np.isin(mask, [10])
             imageio.imwrite(os.path.join(sky_mask_dir, f"{fbase}.png"), sky_mask.astype(np.uint8)*255)
+
+            # save road mask
+            road_mask = np.isin(mask, [0])
+            imageio.imwrite(os.path.join(road_mask_dir, f"{fbase}.png"), road_mask.astype(np.uint8) * 255)
+
+            # save building mask
+            building_mask = np.isin(mask, [2])
+            imageio.imwrite(os.path.join(building_mask_dir, f"{fbase}.png"), building_mask.astype(np.uint8) * 255)
             
             if args.process_dynamic_mask:
                 # save human masks

@@ -154,7 +154,7 @@ ProjectPath/data/
               │  ├──sky_masks/          # Sky masks: {timestep:03d}_{cam_id}.png
               │  ├──dynamic_masks/      # Dynamic masks: {timestep:03d}_{cam_id}.png
               │  ├──fine_dynamic_masks/ # (Optional) Fine dynamic masks: {timestep:03d}_{cam_id}.png
-              │  ├──objects/            # Object information
+              │  ├──instances/            # Object information
               │  └──humanpose/          # Preprocessed human body pose: smpl.pkl
               ├── 002/
               └── ...

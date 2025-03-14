@@ -124,6 +124,8 @@ Remember the location where you download into, and pass it to the script in the 
 ```shell
 conda activate segformer
 segformer_path=/pathtosegformer
+'我的'
+segformer_path=/home/sim6/zlg/SegFormer
 
 python datasets/tools/extract_masks.py \
     --data_root data/waymo/processed/training \
@@ -132,6 +134,29 @@ python datasets/tools/extract_masks.py \
     --split_file data/waymo_example_scenes.txt \
     --process_dynamic_mask
 ```
+‘尝试’
+```shell
+python datasets/tools/extract_masks.py \
+    --data_root data/waymo/processed/training \
+    --segformer_path=$segformer_path \
+    --checkpoint=/home/sim6/zlg/SegFormer/pretrained/segformer.b5.1024x1024.city.160k.pth \
+    --split_file data/waymo_example_scenes.txt \
+    --process_dynamic_mask
+
+```
+
+‘尝试’
+```shell
+python datasets/tools/extract_masks.py \
+    --data_root data/waymo/processed/training \
+    --segformer_path=$segformer_path \
+    --checkpoint=/home/sim6/zlg/SegFormer/pretrained/segformer.b5.1024x1024.city.160k.pth \
+    --scene_ids 14 \
+    --process_dynamic_mask
+
+```
+
+
 Replace `/pathtosegformer` with the actual path to your Segformer installation.
 
 Note: The `--process_dynamic_mask` flag is included to process fine dynamic masks along with sky masks.

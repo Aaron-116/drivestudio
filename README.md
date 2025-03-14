@@ -95,7 +95,7 @@ These functionalities are designed to enhance the overall performance and flexib
 
 **[Aug 2024]**  Release code of DriveStudio.
 
-## 🔨 Installation
+## 🔨 Installation  
 
 Run the following commands to set up the environment:
 
@@ -117,7 +117,7 @@ cd third_party/smplx/
 pip install -e .
 cd ../..
 ```
-
+x
 ## 📊 Prepare Data
 We support most popular public driving datasets. Detailed instructions for downloading and processing each dataset are available in the following documents:
 
@@ -134,14 +134,61 @@ We support most popular public driving datasets. Detailed instructions for downl
 export PYTHONPATH=$(pwd)
 start_timestep=0 # start frame index for training
 end_timestep=-1 # end frame index, -1 for the last frame
+output_root=/home/sim6/zlg/drivestudio/output
+```
 
+```shell
 python tools/train.py \
     --config_file configs/omnire.yaml \
     --output_root $output_root \
     --project $project \
     --run_name $expname \
-    dataset=waymo/3cams \
+    dataset=nuscenes/6cams \
     data.scene_idx=$scene_idx \
+    data.start_timestep=$start_timestep \
+    data.end_timestep=$end_timestep
+```
+Waymo数据集
+```shell
+export PYTHONPATH=$(pwd)
+start_timestep=0 # start frame index for training
+end_timestep=150 # end frame index, -1 for the last frame
+output_root=/home/sim6/zlg/drivestudio/output
+
+python tools/train.py \
+    --config_file configs/omnire.yaml \
+    --output_root $output_root \
+    --project waymo \
+    --run_name test_023_3cams_1 \
+    dataset=waymo/3cams \
+    data.scene_idx=23 \
+    data.start_timestep=$start_timestep \
+    data.end_timestep=$end_timestep
+```
+
+
+nuScenes数据集
+```shell
+#6cams:
+python tools/train.py \
+    --config_file configs/omnire_extended_cam.yaml \
+    --output_root $output_root \
+    --project  nuscenes \
+    --run_name test_1 \
+    dataset=nuscenes/6cams \
+    data.scene_idx=003 \
+    data.start_timestep=$start_timestep \
+    data.end_timestep=$end_timestep
+```
+```shell
+3cams:
+python tools/train.py \
+    --config_file configs/omnire_extended_cam.yaml \
+    --output_root $output_root \
+    --project  nuscenes \
+    --run_name test_3cams_1 \
+    dataset=nuscenes/3cams \
+    data.scene_idx=003 \
     data.start_timestep=$start_timestep \
     data.end_timestep=$end_timestep
 ```
@@ -154,6 +201,12 @@ python tools/train.py \
 ```shell
 python tools/eval.py --resume_from $ckpt_path
 ```
+
+```shell
+#对训练结果进行评价
+python tools/eval.py --resume_from /home/sim6/zlg/drivestudio/output/waymo/test_14_3cams_1/checkpoint_final.pth
+```
+
 
 ## 👏 Contributions
 We're improving our project to develop a robust driving recom/sim system. Some areas we're focusing on:

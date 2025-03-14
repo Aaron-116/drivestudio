@@ -23,7 +23,7 @@ opencv-python
 open3d==0.16.0
 pyquaternion==0.9.9
 chumpy
-numpy==1.23.1
+numpy==1.23.1  #使用waymo/nuscenes工具时，退回numpy==1.21.5
 kornia==0.7.2
 
 tqdm

@@ -136,7 +136,7 @@ def render(
             for k, v in cam_infos.items():
                 if isinstance(v, Tensor):
                     cam_infos[k] = v.cuda(non_blocking=True)
-            # render the image
+            # render the image（调用forward）
             results = trainer(image_infos, cam_infos)
             
             # ------------- clip rgb ------------- #
