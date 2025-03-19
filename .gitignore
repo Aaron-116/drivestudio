@@ -15,6 +15,7 @@ data/argoverse
 data/nuscenes
 data/kitti
 data/nuplan
+data/nuscenes_processed_humanpose
 vscode_debugs
 debug/
 .vscode
