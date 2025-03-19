@@ -134,7 +134,8 @@ We support most popular public driving datasets. Detailed instructions for downl
 export PYTHONPATH=$(pwd)
 start_timestep=0 # start frame index for training
 end_timestep=-1 # end frame index, -1 for the last frame
-output_root=/home/sim6/zlg/drivestudio/output
+#output_root=/home/sim6/zlg/drivestudio/output #sim6
+output_root=/home/ps/zlg/3DGS/drivestudio/output #sim5
 ```
 
 ```shell
@@ -153,13 +154,14 @@ Waymo数据集
 export PYTHONPATH=$(pwd)
 start_timestep=0 # start frame index for training
 end_timestep=150 # end frame index, -1 for the last frame
-output_root=/home/sim6/zlg/drivestudio/output
+#output_root=/home/sim6/zlg/drivestudio/output #sim6
+output_root=/home/ps/zlg/3DGS/drivestudio/output #sim5
 
 python tools/train.py \
     --config_file configs/omnire.yaml \
     --output_root $output_root \
     --project waymo \
-    --run_name test_023_3cams_1 \
+    --run_name test_023_3cams_2 \
     dataset=waymo/3cams \
     data.scene_idx=23 \
     data.start_timestep=$start_timestep \
