@@ -131,6 +131,7 @@ We support most popular public driving datasets. Detailed instructions for downl
 ## 🚀 Running
 ### Training
 ```shell
+export CUDA_HOME=/usr/local/cuda
 export PYTHONPATH=$(pwd)
 start_timestep=0 # start frame index for training
 end_timestep=-1 # end frame index, -1 for the last frame
@@ -151,6 +152,7 @@ python tools/train.py \
 ```
 Waymo数据集
 ```shell
+export CUDA_HOME=/usr/local/cuda
 export PYTHONPATH=$(pwd)
 start_timestep=0 # start frame index for training
 end_timestep=150 # end frame index, -1 for the last frame
@@ -161,9 +163,9 @@ python tools/train.py \
     --config_file configs/omnire.yaml \
     --output_root $output_root \
     --project waymo \
-    --run_name test_023_3cams_2 \
+    --run_name test_014_3cams_1 \
     dataset=waymo/3cams \
-    data.scene_idx=23 \
+    data.scene_idx=14 \
     data.start_timestep=$start_timestep \
     data.end_timestep=$end_timestep
 ```
@@ -201,12 +203,16 @@ python tools/train.py \
 - For over 3 cameras or 450+ images, we recommend using `omnire_extended_cam.yaml`. It works better in practice.
 ### Evaluation
 ```shell
+export PYTHONPATH=$(pwd)
+export CUDA_HOME=/usr/local/cuda
 python tools/eval.py --resume_from $ckpt_path
 ```
 
 ```shell
 #对训练结果进行评价
-python tools/eval.py --resume_from /home/sim6/zlg/drivestudio/output/waymo/test_14_3cams_1/checkpoint_final.pth
+export PYTHONPATH=$(pwd)
+export CUDA_HOME=/usr/local/cuda
+python tools/test.py --resume_from /home/ps/zlg/3DGS/drivestudio/output/waymo/test_14_3cams_1/checkpoint_final.pth
 ```
 
 

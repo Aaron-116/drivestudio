@@ -67,7 +67,8 @@ def get_interp_novel_trajectories(
     trajectory_generators = {
         "front_center_interp": front_center_interp,
         "s_curve": s_curve,
-        "three_key_poses": three_key_poses_trajectory
+        "three_key_poses": three_key_poses_trajectory,
+        "move_up": up_poses_trajectory
     }
     
     if traj_type not in trajectory_generators:
@@ -152,3 +153,44 @@ def three_key_poses_trajectory(
     # Stack the key poses and interpolate
     key_poses = torch.stack(key_poses)
     return interpolate_poses(key_poses, target_frames)
+
+def up_poses_trajectory(
+        dataset_type: str,
+        per_cam_poses: Dict[int, torch.Tensor],
+        original_frames: int,
+        target_frames: int
+) -> torch.Tensor:
+    """
+    Adjust the camera pose:
+    1. Increase the camera height by 5 meters.
+
+    Args:
+        per_cam_poses (Dict[int, torch.Tensor]): Dictionary of camera poses.
+
+    Returns:
+        torch.Tensor: Adjusted camera pose of shape (N, 4, 4).
+    """
+    assert 0 in per_cam_poses.keys(), "Front center camera (ID 0) is required"
+
+    current_pose = per_cam_poses[0]
+
+    translation_matrix = torch.tensor([
+        [1, 0, 0, 0],  # x
+        [0, 1, 0, -1],  # z
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]
+    ], dtype=torch.float32).cuda()
+
+    angle = -np.pi / 6
+    rotation_matrix = torch.tensor([
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]
+    ], dtype=torch.float32).cuda()
+
+    transform_matrix = torch.mm(translation_matrix, rotation_matrix)
+
+    adjusted_poses = torch.stack([torch.mm(transform_matrix, current_pose[i]) for i in range(len(current_pose))])
+
+    return interpolate_poses(adjusted_poses, target_frames)
