@@ -162,9 +162,7 @@ def up_poses_trajectory(
 ) -> torch.Tensor:
     """
     Adjust the camera pose:
-    1. Increase the camera height by 5 meters.
-
-    Args:
+        Args:
         per_cam_poses (Dict[int, torch.Tensor]): Dictionary of camera poses.
 
     Returns:
@@ -173,24 +171,23 @@ def up_poses_trajectory(
     assert 0 in per_cam_poses.keys(), "Front center camera (ID 0) is required"
 
     current_pose = per_cam_poses[0]
+    target_poses = []
 
-    translation_matrix = torch.tensor([
-        [1, 0, 0, 0],  # x
-        [0, 1, 0, -1],  # z
-        [0, 0, 1, 0],
+    angle = -np.pi / 6   # 绕z轴旋转
+    # waymo coordinate system: x front, y left, z up
+    transform_matrix = torch.tensor([
+        [np.cos(angle), -np.sin(angle), 0, 1],  # x
+        [np.sin(angle), np.cos(angle), 0, 2],  # y
+        [0, 0, 1, 0],   # z
         [0, 0, 0, 1]
     ], dtype=torch.float32).cuda()
 
-    angle = -np.pi / 6
-    rotation_matrix = torch.tensor([
-        [1, 0, 0, 0],
-        [0, 1, 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1]
-    ], dtype=torch.float32).cuda()
+    # adjusted_poses = torch.stack([torch.mm(transform_matrix, current_pose[i]) for i in range(len(current_pose))])
+    for i in range(len(current_pose)):  # 代码效率待优化
+        adjusted_poses = torch.eye(4, device=per_cam_poses[0][0].device)
+        adjusted_poses[:3, :3] = torch.mm(transform_matrix[:3, :3], current_pose[i][:3, :3])
+        adjusted_poses[:3, 3] = torch.add(transform_matrix[:3, 3], current_pose[i][:3, 3])
+        target_poses.append(adjusted_poses)
+    target_poses = torch.stack(target_poses)
 
-    transform_matrix = torch.mm(translation_matrix, rotation_matrix)
-
-    adjusted_poses = torch.stack([torch.mm(transform_matrix, current_pose[i]) for i in range(len(current_pose))])
-
-    return interpolate_poses(adjusted_poses, target_frames)
+    return interpolate_poses(target_poses, target_frames)

@@ -163,9 +163,9 @@ python tools/train.py \
     --config_file configs/omnire.yaml \
     --output_root $output_root \
     --project waymo \
-    --run_name test_014_3cams_1 \
+    --run_name test_023_3cams_1 \
     dataset=waymo/3cams \
-    data.scene_idx=14 \
+    data.scene_idx=23 \
     data.start_timestep=$start_timestep \
     data.end_timestep=$end_timestep
 ```
