@@ -1,4 +1,4 @@
-from typing import Dict, Union, Literal
+from typing import Dict, Union, Literal, Tuple
 import logging
 import os
 import cv2
@@ -709,7 +709,7 @@ class DrivingDataset(SceneDataset):
         self,
         traj_types: List[str] = ["front_center_interp"],
         target_frames: int = 100
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Get multiple novel trajectories of the scene for rendering.
         
@@ -739,8 +739,9 @@ class DrivingDataset(SceneDataset):
                 traj_type,
                 target_frames
             )
-        
-        return novel_trajs
+        initial_pose = per_cam_poses[0][0]
+
+        return novel_trajs, initial_pose
 
     def prepare_novel_view_render_data(self, traj: torch.Tensor) -> list:
             """
