@@ -460,6 +460,7 @@ class VanillaGaussians(nn.Module):
         self._features_rest = Parameter(torch.zeros((N,) + self._features_rest.shape[1:], device=self.device))
         self._opacities = Parameter(torch.zeros((N,) + self._opacities.shape[1:], device=self.device))
         msg = super().load_state_dict(state_dict, **kwargs)
+        print(self._means)
         return msg
     
     def export_gaussians_to_ply(self, alpha_thresh: float) -> Dict:

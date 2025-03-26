@@ -202,6 +202,10 @@ def main(args):
     logger.info(
         f"Resuming training from {args.resume_from}, starting at step {trainer.step}"
     )
+
+    # scene edit
+    remove_ids = [9]
+    trainer.scene_edit(remove_ids)
     
     if args.enable_viewer:
         # a simple viewer for background visualization

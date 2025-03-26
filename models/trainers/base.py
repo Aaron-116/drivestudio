@@ -664,11 +664,11 @@ class BasicTrainer(nn.Module):
         if not load_only_model:
             raise NotImplementedError("Now only support loading model, \
                 it seems there is no need to load optimizer and schedulers")
-            for k, v in loaded_state_optimizers.items():
-                self.optimizer[k].load_state_dict(v)
-            for k, v in loaded_state_schedulers.items():
-                self.schedulers[k].load_state_dict(v)
-            self.grad_scaler.load_state_dict(loaded_grad_scaler)
+            # for k, v in loaded_state_optimizers.items():
+            #     self.optimizer[k].load_state_dict(v)
+            # for k, v in loaded_state_schedulers.items():
+            #     self.schedulers[k].load_state_dict(v)
+            # self.grad_scaler.load_state_dict(loaded_grad_scaler)
         
         # load model
         model_state_dict = state_dict.pop("models")
@@ -684,7 +684,16 @@ class BasicTrainer(nn.Module):
             logger.info(f"{class_name}: {msg}")
         msg = super().load_state_dict(state_dict, strict)
         logger.info(f"BasicTrainer: {msg}")
-        
+
+    def scene_edit(self, instance_ids):
+        class_name = "RigidNodes"
+        model = self.models[class_name]
+        if class_name not in self.models:
+            logger.error(f"No such class named {class_name}")
+        else:
+            for id in instance_ids:
+               model.remove_instances([id])
+
     def resume_from_checkpoint(
         self,
         ckpt_path: str,

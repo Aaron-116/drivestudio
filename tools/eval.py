@@ -150,7 +150,7 @@ def do_evaluation(
     render_novel_cfg = cfg.render.get("render_novel", None)
     if render_novel_cfg is not None:
         logger.info("Rendering novel views...")
-        render_traj = dataset.get_novel_render_traj(
+        render_traj, __ = dataset.get_novel_render_traj(
             traj_types=render_novel_cfg.traj_types,
             target_frames=render_novel_cfg.get("frames", dataset.frame_num),
         )
