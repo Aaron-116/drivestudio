@@ -150,7 +150,7 @@ def do_evaluation(
     render_novel_cfg = cfg.render.get("render_novel", None)
     if render_novel_cfg is not None:
         logger.info("Rendering novel views...")
-        render_traj, initial_pose = dataset.get_novel_render_traj(
+        render_traj, __ = dataset.get_novel_render_traj(
             traj_types=render_novel_cfg.traj_types,
             target_frames=render_novel_cfg.get("frames", dataset.frame_num),
         )
@@ -202,11 +202,6 @@ def main(args):
     logger.info(
         f"Resuming training from {args.resume_from}, starting at step {trainer.step}"
     )
-
-    # scene edit
-    remove_ids = [2]
-    trainer.scene_edit(remove_ids)
-    print(f'instances {remove_ids} are removed')
     
     if args.enable_viewer:
         # a simple viewer for background visualization
@@ -254,7 +249,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Train Gaussian Splatting for a single scene")    
     # eval
-    parser.add_argument("--resume_from", default='/home/ps/zlg/3DGS/drivestudio/output/waymo/test/checkpoint_final.pth', help="path to checkpoint to resume from", type=str)
+    parser.add_argument("--resume_from", default=None, help="path to checkpoint to resume from", type=str, required=True)
     parser.add_argument("--render_video_postfix", type=str, default=None, help="an optional postfix for video")    
     parser.add_argument("--save_catted_videos", type=bool, default=False, help="visualize lidar on image")
     

@@ -6,6 +6,8 @@ import json
 import wandb
 import logging
 import argparse
+import numpy as np
+import cv2
 
 import torch
 from datasets.driving_dataset import DrivingDataset
@@ -150,7 +152,7 @@ def do_evaluation(
     render_novel_cfg = cfg.render.get("render_novel", None)
     if render_novel_cfg is not None:
         logger.info("Rendering novel views...")
-        render_traj, initial_pose = dataset.get_novel_render_traj(
+        render_traj, initial_pos = dataset.get_novel_render_traj(
             traj_types=render_novel_cfg.traj_types,
             target_frames=render_novel_cfg.get("frames", dataset.frame_num),
         )
@@ -169,7 +171,32 @@ def do_evaluation(
                 fps=render_novel_cfg.get("fps", cfg.render.fps)
             )
             logger.info(f"Saved novel view video for trajectory type: {traj_type} to {save_path}")
-            
+
+            # 初始化OpenCV窗口
+            initial_pos = initial_pos.unsqueeze(0)
+            frame_data = dataset.prepare_novel_view_render_data(initial_pos)
+            with torch.no_grad():
+                # 移动初始数据到GPU
+                current_frame_data = frame_data[0]
+                for key, value in current_frame_data["cam_infos"].items():
+                    current_frame_data["cam_infos"][key] = value.cuda(non_blocking=True)
+                for key, value in current_frame_data["image_infos"].items():
+                    current_frame_data["image_infos"][key] = value.cuda(non_blocking=True)
+                outputs = trainer(
+                    image_infos=current_frame_data["image_infos"],
+                    camera_infos=current_frame_data["cam_infos"],
+                    novel_view=True
+                )
+
+                # 转换并显示图像
+            rgb = outputs["rgb"].cpu().numpy().clip(1e-6, 1 - 1e-6)
+            rgb_uint8 = (rgb * 255).astype(np.uint8)
+
+            cv2.namedWindow('Real-time Rendering', cv2.WINDOW_AUTOSIZE)
+            # OpenCV需要BGR格式
+            cv2.imshow('Real-time Rendering', cv2.cvtColor(rgb_uint8, cv2.COLOR_RGB2BGR))
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
 def main(args):
     log_dir = os.path.dirname(args.resume_from)
     cfg = OmegaConf.load(os.path.join(log_dir, "config.yaml"))
@@ -202,11 +229,6 @@ def main(args):
     logger.info(
         f"Resuming training from {args.resume_from}, starting at step {trainer.step}"
     )
-
-    # scene edit
-    remove_ids = [2]
-    trainer.scene_edit(remove_ids)
-    print(f'instances {remove_ids} are removed')
     
     if args.enable_viewer:
         # a simple viewer for background visualization
@@ -254,7 +276,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Train Gaussian Splatting for a single scene")    
     # eval
-    parser.add_argument("--resume_from", default='/home/ps/zlg/3DGS/drivestudio/output/waymo/test/checkpoint_final.pth', help="path to checkpoint to resume from", type=str)
+    parser.add_argument("--resume_from", default=None, help="path to checkpoint to resume from", type=str, required=True)
     parser.add_argument("--render_video_postfix", type=str, default=None, help="an optional postfix for video")    
     parser.add_argument("--save_catted_videos", type=bool, default=False, help="visualize lidar on image")
     

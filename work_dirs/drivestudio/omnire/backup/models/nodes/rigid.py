@@ -57,7 +57,6 @@ class RigidNodes(VanillaGaussians):
         instances_size = []
         instances_fv = []
         point_ids = []
-        instaces_ids_in_dataset = []
         for id_in_model, (id_in_dataset, v) in enumerate(instance_pts_dict.items()):
             init_means.append(v["pts"])
             init_colors.append(v["colors"])
@@ -65,14 +64,12 @@ class RigidNodes(VanillaGaussians):
             instances_size.append(v["size"])
             instances_fv.append(v["frame_info"].unsqueeze(1))
             point_ids.append(torch.full((v["num_pts"], 1), id_in_model, dtype=torch.long))
-            instaces_ids_in_dataset.append(id_in_dataset)
         init_means = torch.cat(init_means, dim=0).to(self.device) # (N, 3)
         init_colors = torch.cat(init_colors, dim=0).to(self.device) # (N, 3)
         instances_pose = torch.cat(instances_pose, dim=1).to(self.device) # (num_frame, num_instances, 4, 4)
         self.instances_size = torch.stack(instances_size).to(self.device) # (num_instances, 3)
         self.instances_fv = torch.cat(instances_fv, dim=1).to(self.device) # (num_frame, num_instances)
         self.point_ids = torch.cat(point_ids, dim=0).to(self.device)
-        self.instaces_ids_in_dataset = torch.tensor(instaces_ids_in_dataset).to(self.device)
         instances_quats = self.get_instances_quats(instances_pose)
         instances_trans = instances_pose[..., :3, 3]
         
@@ -487,13 +484,11 @@ class RigidNodes(VanillaGaussians):
             "points_ids": self.point_ids,
             "instances_size": self.instances_size,
             "instances_fv": self.instances_fv,
-            "instances_ids": self.instaces_ids_in_dataset
         })
         return state_dict
     
     def load_state_dict(self, state_dict: Dict, **kwargs) -> str:
         self.point_ids = state_dict.pop("points_ids")
-        self.instances_ids_in_dataset = state_dict.pop("instances_ids")
         self.instances_size = state_dict.pop("instances_size")
         self.instances_fv = state_dict.pop("instances_fv")
         self.instances_trans = Parameter(
@@ -513,10 +508,7 @@ class RigidNodes(VanillaGaussians):
         Args:
             remove_id_list: list of instance ids to be removed
         """
-        for instance_id in remove_id_list:
-            for index, idx in enumerate(self.instances_ids_in_dataset):
-                if idx == instance_id:
-                    ins_ids = index
+        for ins_ids in remove_id_list:
             mask = ~(self.point_ids[..., 0] == ins_ids)
             self._means = Parameter(self._means[mask])
             self._scales = Parameter(self._scales[mask])

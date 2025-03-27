@@ -1,165 +1,102 @@
 """
-Filename: 3dgs.py
+Filename: pvg.py
 
 Author: Ziyu Chen (ziyu.sjtu@gmail.com)
 
 Description:
-Unofficial implementation of 3DGS based on the work by Bernhard Kerbl, Georgios Kopanas, Thomas Leimkühler, and George Drettakis. 
-This implementation is modified from the nerfstudio GaussianSplattingModel.
+Unofficial implementation of PVG based on the work by Yurui Chen, Chun Gu, Junzhe Jiang, Xiatian Zhu, Li Zhang.
 
-- Original work by Bernhard Kerbl, Georgios Kopanas, Thomas Leimkühler, and George Drettakis.
-- Codebase reference: nerfstudio GaussianSplattingModel (https://github.com/nerfstudio-project/nerfstudio/blob/gaussian-splatting/nerfstudio/models/gaussian_splatting.py)
-
-Original paper: https://arxiv.org/abs/2308.04079
+Original paper: https://arxiv.org/abs/2311.18561
 """
 
-from typing import Dict, List, Tuple
-from omegaconf import OmegaConf
+from typing import Dict, List
+import random
 import logging
-
 import torch
-import torch.nn as nn
+import torch.distributions.uniform as uniform
 from torch.nn import Parameter
 
 from models.gaussians.basics import *
+from models.gaussians.vanilla import VanillaGaussians
 
 logger = logging.getLogger()
 
-class VanillaGaussians(nn.Module):
-
+class PeriodicVibrationGaussians(VanillaGaussians):
     def __init__(
         self,
-        class_name: str,
-        ctrl: OmegaConf,
-        reg: OmegaConf = None,
-        networks: OmegaConf = None,
-        scene_scale: float = 30.,
-        scene_origin: torch.Tensor = torch.zeros(3),
-        num_train_images: int = 300,
-        device: torch.device = torch.device("cuda"),
         **kwargs
     ):
-        super().__init__()
-        self.class_prefix = class_name + "#"
-        self.ctrl_cfg = ctrl
-        self.reg_cfg = reg
-        self.networks_cfg = networks
-        self.scene_scale = scene_scale
-        self.scene_origin = scene_origin
-        self.num_train_images = num_train_images
-        self.step = 0
+        super().__init__(**kwargs)
+        self._taus = torch.zeros(1, 1, device=self.device)
+        self._betas = torch.zeros(1, 1, device=self.device)
+        self._velocity = torch.zeros(1, 3, device=self.device)
         
-        self.device = device
-        self.ball_gaussians=self.ctrl_cfg.get("ball_gaussians", False)
-        self.gaussian_2d = self.ctrl_cfg.get("gaussian_2d", False)
-        
-        # for evaluation
-        self.in_test_set = False
-        
-        # init models
-        self.xys_grad_norm = None
-        self.max_2Dsize = None
-        self._means = torch.zeros(1, 3, device=self.device)
-        if self.ball_gaussians:
-            self._scales = torch.zeros(1, 1, device=self.device)
-        else:
-            if self.gaussian_2d:
-                self._scales = torch.zeros(1, 2, device=self.device)
-            else:
-                self._scales = torch.zeros(1, 3, device=self.device)
-        self._quats = torch.zeros(1, 4, device=self.device)
-        self._opacities = torch.zeros(1, 1, device=self.device)
-        self._features_dc = torch.zeros(1, 3, device=self.device)
-        self._features_rest = torch.zeros(1, num_sh_bases(self.sh_degree) - 1, 3, device=self.device)
-        
-    @property
-    def sh_degree(self):
-        return self.ctrl_cfg.sh_degree
+        self.T = self.ctrl_cfg.cycle_length
+        self.t_grad_accum = None
 
-    def create_from_pcd(self, init_means: torch.Tensor, init_colors: torch.Tensor) -> None:
-        self._means = Parameter(init_means)
+    def set_cur_frame(self, frame_id: int):
+        self.cur_frame = frame_id
+    def register_normalized_timestamps(self, normalized_timestamps: int):
+        """
+        num_timesteps: the total number of timesteps of both train and test
+        """
+        self.normalized_timestamps = normalized_timestamps
         
-        distances, _ = k_nearest_sklearn(self._means.data, 3)
-        distances = torch.from_numpy(distances)
-        # find the average of the three nearest neighbors for each point and use that as the scale
-        avg_dist = distances.mean(dim=-1, keepdim=True).to(self.device)
-        if self.ball_gaussians:
-            self._scales = Parameter(torch.log(avg_dist.repeat(1, 1)))
-        else:
-            if self.gaussian_2d:
-                self._scales = Parameter(torch.log(avg_dist.repeat(1, 2)))
-            else:
-                self._scales = Parameter(torch.log(avg_dist.repeat(1, 3)))
-        self._quats = Parameter(random_quat_tensor(self.num_points).to(self.device))
-        dim_sh = num_sh_bases(self.sh_degree)
+        self.num_timestamps = len(normalized_timestamps)
+        self.normalized_time_interval = 1.0 / (self.num_timestamps - 1)
+        self.train_time_scale = self.ctrl_cfg.time_interval / self.normalized_time_interval
+        
+    def create_from_pcd(self, init_means: torch.Tensor, init_colors: torch.Tensor, init_times: torch.Tensor) -> None:
+        super().create_from_pcd(init_means, init_colors)
+        
+        # time related parameters
+        self._taus = Parameter((init_times * self.train_time_scale).to(self.device))                      # life peak
+        self._velocity = Parameter(torch.zeros(self.num_points, 3).to(self.device))                       # vibration direction
+        betas_init = torch.sqrt(torch.ones(self.num_points, 1).to(self.device) * self.ctrl_cfg.betas_init)
+        self._betas = Parameter(torch.log(betas_init))                                                    # life span
 
-        fused_color = RGB2SH(init_colors) # float range [0, 1] 
-        shs = torch.zeros((fused_color.shape[0], dim_sh, 3)).float().to(self.device)
-        if self.sh_degree > 0:
-            shs[:, 0, :3] = fused_color
-            shs[:, 1:, 3:] = 0.0
+    @property
+    def get_scaling_t(self):
+        return torch.exp(self._betas)
+    @property
+    def vibr_dirs_norm(self):
+        return self._velocity.norm(dim=-1)
+    @property
+    def temporal_means(self):
+        a = 1/self.T * torch.pi * 2
+        means = self._means + self._velocity * torch.sin(
+            (self.cur_time - self._taus) * a
+        ) / a
+        if self.in_smooth:
+            return means + self.velocity * self.delta_t
         else:
-            shs[:, 0, :3] = torch.logit(init_colors, eps=1e-10)
-        self._features_dc = Parameter(shs[:, 0, :])
-        self._features_rest = Parameter(shs[:, 1:, :])
-        self._opacities = Parameter(torch.logit(0.1 * torch.ones(self.num_points, 1, device=self.device)))
-        
+            return means
     @property
-    def colors(self):
-        if self.sh_degree > 0:
-            return SH2RGB(self._features_dc)
-        else:
-            return torch.sigmoid(self._features_dc)
+    def temporal_opacities(self):
+        return self.get_opacity * torch.exp(
+            -0.5 * (self.cur_time - self._taus)**2 / (self.get_scaling_t ** 2)
+        )
     @property
-    def shs_0(self):
-        return self._features_dc
+    def get_marginal_t(self):
+        return torch.exp(-0.5 * (self._taus - self.cur_time) ** 2 / self.get_scaling_t ** 2)
     @property
-    def shs_rest(self):
-        return self._features_rest
+    def rho(self):
+        """staticness coefficient"""
+        return self.get_scaling_t / self.T
     @property
-    def num_points(self):
-        return self._means.shape[0]
+    def velocity(self):
+        return self._velocity * torch.exp(-0.5 * self.rho)
     @property
-    def get_scaling(self):
-        if self.ball_gaussians:
-            if self.gaussian_2d:
-                scaling = torch.exp(self._scales).repeat(1, 2)
-                scaling = torch.cat([scaling, torch.zeros_like(scaling[..., :1])], dim=-1)
-                return scaling
-            else:
-                return torch.exp(self._scales).repeat(1, 3)
-        else:
-            if self.gaussian_2d:
-                scaling = torch.exp(self._scales)
-                scaling = torch.cat([scaling[..., :2], torch.zeros_like(scaling[..., :1])], dim=-1)
-                return scaling
-            else:
-                return torch.exp(self._scales)
-    @property
-    def get_opacity(self):
-        return torch.sigmoid(self._opacities)
-    @property
-    def get_quats(self):
-        return self.quat_act(self._quats)
+    def gamma(self):
+        """
+        dynamic scale factor for Position-aware point adaptive control
+        refer to PVG Section 3.3
+        """
+        with torch.no_grad():
+            gamma = (self._means - self.scene_origin).norm(dim=-1) * self.scene_scale - 1
+            gamma = torch.where(gamma<=1, 1, gamma) / self.scene_scale
+        return gamma
     
-    def quat_act(self, x: torch.Tensor) -> torch.Tensor:
-        return x / x.norm(dim=-1, keepdim=True)
-    
-    def preprocess_per_train_step(self, step: int):
-        self.step = step
-        
-    def postprocess_per_train_step(
-        self,
-        step: int,
-        optimizer: torch.optim.Optimizer,
-        radii: torch.Tensor,
-        xys_grad: torch.Tensor,
-        last_size: int,
-    ) -> None:
-        self.after_train(radii, xys_grad, last_size)
-        if step % self.ctrl_cfg.refine_interval == 0:
-            self.refinement_after(step, optimizer)
-
     def after_train(
         self,
         radii: torch.Tensor,
@@ -173,14 +110,19 @@ class VanillaGaussians(nn.Module):
             full_mask[self.filter_mask] = visible_mask
             
             grads = xys_grad.norm(dim=-1)
+            t_grads = self._taus.grad.clone().abs()[self.filter_mask].squeeze()
             if self.xys_grad_norm is None:
                 self.xys_grad_norm = torch.zeros(self.num_points, device=grads.device, dtype=grads.dtype)
                 self.xys_grad_norm[self.filter_mask] = grads
+                
+                self.t_grad_accum = torch.zeros(self.num_points, device=grads.device, dtype=grads.dtype)
+                self.t_grad_accum[self.filter_mask] = t_grads
                 self.vis_counts = torch.ones_like(self.xys_grad_norm)
             else:
                 assert self.vis_counts is not None
                 self.vis_counts[full_mask] = self.vis_counts[full_mask] + 1
                 self.xys_grad_norm[full_mask] = grads[visible_mask] + self.xys_grad_norm[full_mask]
+                self.t_grad_accum[full_mask] = t_grads[visible_mask] + self.t_grad_accum[full_mask]
 
             # update the max screen size, as a ratio of number of pixels
             if self.max_2Dsize is None:
@@ -189,7 +131,7 @@ class VanillaGaussians(nn.Module):
             self.max_2Dsize[full_mask] = torch.maximum(
                 self.max_2Dsize[full_mask], newradii / float(last_size)
             )
-        
+
     def get_gaussian_param_groups(self) -> Dict[str, List[Parameter]]:
         return {
             self.class_prefix+"xyz": [self._means],
@@ -198,11 +140,11 @@ class VanillaGaussians(nn.Module):
             self.class_prefix+"opacity": [self._opacities],
             self.class_prefix+"scaling": [self._scales],
             self.class_prefix+"rotation": [self._quats],
+            self.class_prefix+"velocity": [self._velocity],
+            self.class_prefix+"life_peak": [self._taus],
+            self.class_prefix+"life_span": [self._betas]
         }
-    
-    def get_param_groups(self) -> Dict[str, List[Parameter]]:
-        return self.get_gaussian_param_groups()
-
+        
     def refinement_after(self, step, optimizer: torch.optim.Optimizer) -> None:
         assert step == self.step
         if self.step <= self.ctrl_cfg.warmup_steps:
@@ -213,6 +155,7 @@ class VanillaGaussians(nn.Module):
             do_densification = (
                 self.step < self.ctrl_cfg.stop_split_at
                 and self.step % reset_interval > max(self.num_train_images, self.ctrl_cfg.refine_interval)
+                and self.num_points < self.ctrl_cfg.densify_until_num_points
             )
             # split & duplicate
             print(f"Class {self.class_prefix} current points: {self.num_points} @ step {self.step}")
@@ -220,12 +163,19 @@ class VanillaGaussians(nn.Module):
                 assert self.xys_grad_norm is not None and self.vis_counts is not None and self.max_2Dsize is not None
                 
                 avg_grad_norm = self.xys_grad_norm / self.vis_counts
-                high_grads = (avg_grad_norm > self.ctrl_cfg.densify_grad_thresh).squeeze()
+                high_xyz_grads = (avg_grad_norm > self.ctrl_cfg.densify_grad_thresh).squeeze()
                 
-                splits = (
+                t_avg_grad = self.t_grad_accum / self.vis_counts
+                high_t_grads = t_avg_grad > self.ctrl_cfg.densify_t_grad_thresh
+                high_grads = high_xyz_grads | high_t_grads
+                
+                splits_xyz = (
                     self.get_scaling.max(dim=-1).values > \
-                        self.ctrl_cfg.densify_size_thresh * self.scene_scale
+                        self.ctrl_cfg.densify_size_thresh * self.scene_scale * self.gamma
                 ).squeeze()
+                splits_t = (torch.max(self.get_scaling_t, dim=1).values > self.ctrl_cfg.densify_t_size_thresh) & high_t_grads
+                splits = splits_xyz | splits_t
+                
                 if self.step < self.ctrl_cfg.stop_screen_size_at:
                     splits |= (self.max_2Dsize > self.ctrl_cfg.split_screen_size).squeeze()
                 splits &= high_grads
@@ -237,12 +187,18 @@ class VanillaGaussians(nn.Module):
                     split_opacities,
                     split_scales,
                     split_quats,
+                    split_dirs,
+                    split_taus,
+                    split_betas,
                 ) = self.split_gaussians(splits, nsamps)
 
-                dups = (
+                dups_xyz = (
                     self.get_scaling.max(dim=-1).values <= \
-                        self.ctrl_cfg.densify_size_thresh * self.scene_scale
+                        self.ctrl_cfg.densify_size_thresh * self.scene_scale * self.gamma
                 ).squeeze()
+                dups_t = (torch.max(self.get_scaling_t, dim=1).values <= self.ctrl_cfg.densify_t_size_thresh) & high_t_grads
+                
+                dups = dups_xyz | dups_t
                 dups &= high_grads
                 (
                     dup_means,
@@ -251,6 +207,9 @@ class VanillaGaussians(nn.Module):
                     dup_opacities,
                     dup_scales,
                     dup_quats,
+                    dup_dirs,
+                    dup_taus,
+                    dup_betas,
                 ) = self.dup_gaussians(dups)
                 
                 self._means = Parameter(torch.cat([self._means.detach(), split_means, dup_means], dim=0))
@@ -260,6 +219,9 @@ class VanillaGaussians(nn.Module):
                 self._opacities = Parameter(torch.cat([self._opacities.detach(), split_opacities, dup_opacities], dim=0))
                 self._scales = Parameter(torch.cat([self._scales.detach(), split_scales, dup_scales], dim=0))
                 self._quats = Parameter(torch.cat([self._quats.detach(), split_quats, dup_quats], dim=0))
+                self._velocity = Parameter(torch.cat([self._velocity.detach(), split_dirs, dup_dirs], dim=0))
+                self._taus = Parameter(torch.cat([self._taus.detach(), split_taus, dup_taus], dim=0))
+                self._betas = Parameter(torch.cat([self._betas.detach(), split_betas, dup_betas], dim=0))
                 
                 # append zeros to the max_2Dsize tensor
                 self.max_2Dsize = torch.cat(
@@ -282,7 +244,7 @@ class VanillaGaussians(nn.Module):
                 param_groups = self.get_gaussian_param_groups()
                 remove_from_optim(optimizer, deleted_mask, param_groups)
             print(f"Class {self.class_prefix} left points: {self.num_points}")
-                    
+
             # reset opacity
             if self.step % reset_interval == self.ctrl_cfg.refine_interval:
                 # NOTE: in nerfstudio, reset_value = cull_alpha_thresh * 0.8
@@ -298,6 +260,7 @@ class VanillaGaussians(nn.Module):
                         param_state["exp_avg"] = torch.zeros_like(param_state["exp_avg"])
                         param_state["exp_avg_sq"] = torch.zeros_like(param_state["exp_avg_sq"])
             self.xys_grad_norm = None
+            self.t_grad_accum = None
             self.vis_counts = None
             self.max_2Dsize = None
 
@@ -312,7 +275,7 @@ class VanillaGaussians(nn.Module):
             # cull huge ones
             toobigs = (
                 torch.exp(self._scales).max(dim=-1).values > 
-                self.ctrl_cfg.cull_scale_thresh * self.scene_scale
+                self.ctrl_cfg.cull_scale_thresh * self.scene_scale * self.gamma
             ).squeeze()
             culls = culls | toobigs
             if self.step < self.ctrl_cfg.stop_screen_size_at:
@@ -322,15 +285,17 @@ class VanillaGaussians(nn.Module):
         self._means = Parameter(self._means[~culls].detach())
         self._scales = Parameter(self._scales[~culls].detach())
         self._quats = Parameter(self._quats[~culls].detach())
-        # self.colors_all = Parameter(self.colors_all[~culls].detach())
         self._features_dc = Parameter(self._features_dc[~culls].detach())
         self._features_rest = Parameter(self._features_rest[~culls].detach())
         self._opacities = Parameter(self._opacities[~culls].detach())
+        self._velocity = Parameter(self._velocity[~culls].detach())
+        self._taus = Parameter(self._taus[~culls].detach())
+        self._betas = Parameter(self._betas[~culls].detach())
 
         print(f"     Cull: {n_bef - self.num_points}")
         return culls
-
-    def split_gaussians(self, split_mask: torch.Tensor, samps: int) -> Tuple:
+    
+    def split_gaussians(self, split_mask, samps):
         """
         This function splits gaussians that are too large
         """
@@ -358,9 +323,37 @@ class VanillaGaussians(nn.Module):
         self._scales[split_mask] = torch.log(torch.exp(self._scales[split_mask]) / size_fac)
         # step 5, sample new quats
         new_quats = self._quats[split_mask].repeat(samps, 1)
-        return new_means, new_feature_dc, new_feature_rest, new_opacities, new_scales, new_quats
-
-    def dup_gaussians(self, dup_mask: torch.Tensor) -> Tuple:
+        # step 6, sample new temporal properties
+        # new_velocity = self._velocity[split_mask].repeat(samps, 1)
+        # new_taus = self._taus[split_mask].repeat(samps, 1)
+        # new_betas = self._betas[split_mask].repeat(samps, 1)
+        stds_t = self.get_scaling_t[split_mask].repeat(samps, 1)
+        means_t = torch.zeros((stds_t.size(0), 1), device="cuda")
+        samples_t = torch.normal(mean=means_t, std=stds_t)
+        new_taus = samples_t+self._taus[split_mask].repeat(samps, 1)
+        
+        new_betas = torch.log(self.get_scaling_t[split_mask].repeat(samps, 1) / size_fac)
+        new_velocity = self._velocity[split_mask].repeat(samps, 1)
+        new_means = new_means + self.velocity[split_mask].repeat(samps, 1) * (samples_t)
+    
+        not_split_xyz_mask = (
+            self.get_scaling.max(dim=-1).values <= \
+                self.ctrl_cfg.densify_size_thresh * self.scene_scale * self.gamma
+        ).squeeze()[split_mask]
+        new_scales[not_split_xyz_mask.repeat(samps)] = torch.log(
+            self.get_scaling[split_mask].repeat(samps, 1)
+        )[not_split_xyz_mask.repeat(samps)]
+        
+        not_split_t_mask = (torch.max(self.get_scaling_t, dim=1).values <= self.ctrl_cfg.densify_t_size_thresh)[split_mask]
+        new_betas[not_split_t_mask.repeat(samps)] = torch.log(
+            self.get_scaling_t[split_mask].repeat(samps, 1)
+        )[not_split_t_mask.repeat(samps)]
+        
+        if self.ctrl_cfg.no_time_split:
+            new_betas = torch.log(self.get_scaling_t[split_mask].repeat(samps, 1))
+        return new_means, new_feature_dc, new_feature_rest, new_opacities, new_scales, new_quats, new_velocity, new_taus, new_betas
+    
+    def dup_gaussians(self, dup_mask):
         """
         This function duplicates gaussians that are too small
         """
@@ -373,31 +366,49 @@ class VanillaGaussians(nn.Module):
         dup_opacities = self._opacities[dup_mask]
         dup_scales = self._scales[dup_mask]
         dup_quats = self._quats[dup_mask]
-        return dup_means, dup_feature_dc, dup_feature_rest, dup_opacities, dup_scales, dup_quats
-
+        dup_velocity = self._velocity[dup_mask]
+        dup_taus = self._taus[dup_mask]
+        dup_betas = self._betas[dup_mask]
+        return dup_means, dup_feature_dc, dup_feature_rest, dup_opacities, dup_scales, dup_quats, dup_velocity, dup_taus, dup_betas
+    
     def get_gaussians(self, cam: dataclass_camera) -> Dict:
-        filter_mask = torch.ones_like(self._means[:, 0], dtype=torch.bool)
+        # set time and smooth strategy
+        scaled_train_t = self.normalized_timestamps[self.cur_frame] * self.train_time_scale # t2 in paper
+        if self.training and (
+            self.ctrl_cfg.enable_temporal_smoothing and random.random() < self.ctrl_cfg.smooth_probability
+        ):
+            self.in_smooth = True
+            bound = self.normalized_time_interval * self.ctrl_cfg.distribution_span * self.train_time_scale
+            self.cur_time = scaled_train_t + uniform.Uniform(-bound, bound).sample((1,)).item() # t1 in paper
+            self.delta_t = scaled_train_t - self.cur_time # t2 - t1
+        else:
+            self.in_smooth = False
+            self.cur_time = scaled_train_t
+            self.delta_t = 0.0
+            
+        filter_mask = (self.get_marginal_t > 0.05).squeeze()
         self.filter_mask = filter_mask
+        
+        means = self.temporal_means
+        activated_opacities = self.temporal_opacities
+        activated_scales = self.get_scaling
+        activated_rotations = self.get_quats
         
         # get colors of gaussians
         colors = torch.cat((self._features_dc[:, None, :], self._features_rest), dim=1)
         if self.sh_degree > 0:
-            viewdirs = self._means.detach() - cam.camtoworlds.data[..., :3, 3]  # (N, 3)
+            viewdirs = means.detach() - cam.camtoworlds.data[..., :3, 3]  # (N, 3)
             viewdirs = viewdirs / viewdirs.norm(dim=-1, keepdim=True)
             n = min(self.step // self.ctrl_cfg.sh_degree_interval, self.sh_degree)
             rgbs = spherical_harmonics(n, viewdirs, colors)
             rgbs = torch.clamp(rgbs + 0.5, 0.0, 1.0)
         else:
             rgbs = torch.sigmoid(colors[:, 0, :])
-            
-        activated_opacities = self.get_opacity
-        activated_scales = self.get_scaling
-        activated_rotations = self.get_quats
         actovated_colors = rgbs
         
         # collect gaussians information
         gs_dict = dict(
-            _means=self._means[filter_mask],
+            _means=means[filter_mask],
             _opacities=activated_opacities[filter_mask],
             _rgbs=actovated_colors[filter_mask],
             _scales=activated_scales[filter_mask],
@@ -412,45 +423,18 @@ class VanillaGaussians(nn.Module):
                 raise ValueError(f"Inf detected in gaussian {k} at step {self.step}")
                 
         return gs_dict
-    
+
     def compute_reg_loss(self):
-        loss_dict = {}
-        sharp_shape_reg_cfg = self.reg_cfg.get("sharp_shape_reg", None)
-        if sharp_shape_reg_cfg is not None:
-            w = sharp_shape_reg_cfg.w
-            max_gauss_ratio = sharp_shape_reg_cfg.max_gauss_ratio
-            step_interval = sharp_shape_reg_cfg.step_interval
-            if self.step % step_interval == 0:
-                # scale regularization
-                scale_exp = self.get_scaling
-                scale_reg = torch.maximum(scale_exp.amax(dim=-1) / scale_exp.amin(dim=-1), torch.tensor(max_gauss_ratio)) - max_gauss_ratio
-                scale_reg = scale_reg.mean() * w
-                loss_dict["sharp_shape_reg"] = scale_reg
-
-        flatten_reg = self.reg_cfg.get("flatten", None)
-        if flatten_reg is not None:
-            sclaings = self.get_scaling
-            min_scale, _ = torch.min(sclaings, dim=1)
-            min_scale = torch.clamp(min_scale, 0, 30)
-            flatten_loss = torch.abs(min_scale).mean()
-            loss_dict["flatten"] = flatten_loss * flatten_reg.w
+        loss_dict = super().compute_reg_loss()
         
-        sparse_reg = self.reg_cfg.get("sparse_reg", None)
-        if sparse_reg:
+        velocity_reg = self.reg_cfg.get("velocity_reg", None)
+        # use per point velocity regularization to replace per image velocity regularization
+        if velocity_reg:
             if (self.cur_radii > 0).sum():
-                opacity = torch.sigmoid(self._opacities)
-                opacity = opacity.clamp(1e-6, 1-1e-6)
-                log_opacity = opacity * torch.log(opacity)
-                log_one_minus_opacity = (1-opacity) * torch.log(1 - opacity)
-                sparse_loss = -1 * (log_opacity + log_one_minus_opacity)[self.cur_radii > 0].mean()
-                loss_dict["sparse_reg"] = sparse_loss * sparse_reg.w
-
-        # compute the max of scaling
-        max_s_square_reg = self.reg_cfg.get("max_s_square_reg", None)
-        if max_s_square_reg is not None and not self.ball_gaussians:
-            loss_dict["max_s_square"] = torch.mean((self.get_scaling.max(dim=1).values) ** 2) * max_s_square_reg.w
+                velocity_loss = self.velocity.norm(dim=-1)[self.filter_mask]
+                loss_dict["velocity_reg"] = velocity_loss[self.cur_radii > 0].mean() * velocity_reg.w
         return loss_dict
-    
+
     def load_state_dict(self, state_dict: Dict, **kwargs) -> str:
         N = state_dict["_means"].shape[0]
         self._means = Parameter(torch.zeros((N,) + self._means.shape[1:], device=self.device))
@@ -459,16 +443,8 @@ class VanillaGaussians(nn.Module):
         self._features_dc = Parameter(torch.zeros((N,) + self._features_dc.shape[1:], device=self.device))
         self._features_rest = Parameter(torch.zeros((N,) + self._features_rest.shape[1:], device=self.device))
         self._opacities = Parameter(torch.zeros((N,) + self._opacities.shape[1:], device=self.device))
+        self._taus = Parameter(torch.zeros((N,) + self._taus.shape[1:], device=self.device))
+        self._betas = Parameter(torch.zeros((N,) + self._betas.shape[1:], device=self.device))
+        self._velocity = Parameter(torch.zeros((N,) + self._velocity.shape[1:], device=self.device))
         msg = super().load_state_dict(state_dict, **kwargs)
         return msg
-    
-    def export_gaussians_to_ply(self, alpha_thresh: float) -> Dict:
-        means = self._means
-        direct_color = self.colors
-        
-        activated_opacities = self.get_opacity
-        mask = activated_opacities.squeeze() > alpha_thresh
-        return {
-            "positions": means[mask],
-            "colors": direct_color[mask],
-        }
