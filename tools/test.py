@@ -204,7 +204,7 @@ def main(args):
     )
 
     # scene edit
-    remove_ids = [2]
+    remove_ids = [34]
     trainer.scene_edit(remove_ids)
     print(f'instances {remove_ids} are removed')
     

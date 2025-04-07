@@ -229,7 +229,12 @@ def main(args):
     logger.info(
         f"Resuming training from {args.resume_from}, starting at step {trainer.step}"
     )
-    
+
+    # scene edit
+    remove_ids = [34]
+    trainer.scene_edit(dataset, remove_ids)
+    print(f'instances {remove_ids} are removed')
+
     if args.enable_viewer:
         # a simple viewer for background visualization
         trainer.init_viewer(port=args.viewer_port)
