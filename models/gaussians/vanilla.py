@@ -73,6 +73,11 @@ class VanillaGaussians(nn.Module):
         self._features_dc = torch.zeros(1, 3, device=self.device)
         self._features_rest = torch.zeros(1, num_sh_bases(self.sh_degree) - 1, 3, device=self.device)
 
+        # 降雨参数
+        self.diameter = torch.zeros(1, 1, device=self.device)
+        self.velocity = torch.zeros(1, 1, device=self.device)
+        self.exposure_time = 0.01
+
     @property
     def sh_degree(self):
         return self.ctrl_cfg.sh_degree
@@ -497,23 +502,23 @@ class VanillaGaussians(nn.Module):
         # 雨滴数量, 雨滴直径和速度
         density = 4
         num_points = (x_max - x_min) * (y_max - y_min) * (z_max - z_min) * density
-        diameters = np.random.gamma(shape=6.648, scale=0.166, size=num_points)
-        velocity = 3.197*np.power(diameters, 0.672)
-        diameters = diameters / 1000
+        diameter = torch.distributions.Gamma(6.648, 1/0.166).sample((num_points,)).to(self.device)
+        self.velocity = 3.197*torch.pow(diameter, 0.672)
+        self.diameter = diameter / 1000
         # 假设曝光时间为10ms
-        exposure_time = 0.01
+        self.exposure_time = 0.01
 
         # 生成平移量,直接生成三维均匀分布采样点（每行是一个三维点）
-        translation = np.random.uniform(low=[x_min, y_min, z_min],
-                                        high=[x_max, y_max, z_max],
-                                        size=(num_points, 3))
-        translation = torch.tensor(translation, dtype=torch.float32, device=self.device)
+        low = torch.tensor([x_min, y_min, z_min], device=self.device)
+        high = torch.tensor([x_max, y_max, z_max], device=self.device)
+        # 生成 [0,1) 均匀分布后缩放到 [low, high)
+        translation = (high - low) * torch.rand((num_points, 3), device=self.device) + low
         gaussian_dict["means"] = translation + init_pose[:3, 3]
 
         # 生成缩放，创建一个和translation一样长度，和self.scales一样宽度的全1tensor
         gaussian_dict["scales"] = torch.ones((num_points, 3), dtype=torch.float32, device=self.device)
-        gaussian_dict["scales"][:, :2] = torch.tensor(diameters, dtype=torch.float32, device=self.device).view(-1, 1).repeat(1, 2)
-        streak_length = velocity * exposure_time
+        gaussian_dict["scales"][:, :2] = torch.tensor(self.diameter, dtype=torch.float32, device=self.device).view(-1, 1).repeat(1, 2)
+        streak_length = self.velocity * self.exposure_time
         gaussian_dict["scales"][:, 2] = torch.tensor(streak_length, dtype=torch.float32, device=self.device)
         gaussian_dict["scales"] = torch.log(gaussian_dict["scales"])
 
@@ -528,12 +533,12 @@ class VanillaGaussians(nn.Module):
         gaussian_dict["features_rest"] = torch.zeros((num_points, 15, 3), dtype=torch.float32, device=self.device)
 
         # 透明度
-        opacities = diameters / (velocity * exposure_time)
+        opacities = self.diameter / (self.velocity * self.exposure_time)
         gaussian_dict["opacities"] = torch.tensor(opacities, dtype=torch.float32, device=self.device).view(-1,1)
 
-        self._means = Parameter(torch.cat([self._means, gaussian_dict["means"]], dim=0))
-        self._scales = Parameter(torch.cat([self._scales, gaussian_dict["scales"]], dim=0))
-        self._quats = Parameter(torch.cat([self._quats, gaussian_dict["quats"]], dim=0))
-        self._features_dc = Parameter(torch.cat([self._features_dc, gaussian_dict["features_dc"]], dim=0))
-        self._features_rest = Parameter(torch.cat([self._features_rest, gaussian_dict["features_rest"]], dim=0))
-        self._opacities = Parameter(torch.cat([self._opacities, gaussian_dict["opacities"]], dim=0))
+        self._means = Parameter(gaussian_dict["means"])
+        self._scales = Parameter(gaussian_dict["scales"])
+        self._quats = Parameter(gaussian_dict["quats"])
+        self._features_dc = Parameter(gaussian_dict["features_dc"])
+        self._features_rest = Parameter(gaussian_dict["features_rest"])
+        self._opacities = Parameter(gaussian_dict["opacities"])

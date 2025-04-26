@@ -32,7 +32,10 @@ class MultiTrainer(BasicTrainer):
             self.gaussian_classes["SMPLNodes"] = GSModelType.SMPLNodes
         if "DeformableNodes" in self.model_config:
             self.gaussian_classes["DeformableNodes"] = GSModelType.DeformableNodes
-           
+        if self.rainy:
+            self.gaussian_classes["Rain"] = GSModelType.Rain
+
+        rain_model_cfg = self.model_config['Background']
         for class_name, model_cfg in self.model_config.items():
             # update model config for gaussian classes
             if class_name in self.gaussian_classes:
@@ -48,7 +51,7 @@ class MultiTrainer(BasicTrainer):
                     num_train_images=self.num_train_images,
                     device=self.device
                 )
-                
+
             if class_name in self.misc_classes_keys:
                 model = import_str(model_cfg.type)(
                     class_name=class_name,
@@ -58,7 +61,19 @@ class MultiTrainer(BasicTrainer):
                 ).to(self.device)
 
             self.models[class_name] = model
-            
+
+        if self.rainy:
+            self.model_config["Rain"] = self.update_gaussian_cfg(rain_model_cfg)
+            model = import_str(rain_model_cfg.type)(
+                    **rain_model_cfg,
+                    class_name='Rain',
+                    scene_scale=self.scene_radius,
+                    scene_origin=self.scene_origin,
+                    num_train_images=self.num_train_images,
+                    device=self.device
+                )
+            self.models["Rain"] = model
+
         logger.info(f"Initialized models: {self.models.keys()}")
         
         # register normalized timestamps

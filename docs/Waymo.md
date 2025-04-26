@@ -21,6 +21,7 @@ For the Waymo Open Dataset, we first organize the scene names alphabetically and
 For example, to obtain the 23th, 114th, and 788th scenes from the Waymo Open Dataset, execute:
 
 ```shell
+conda activate base #gcloud 安装在base环境
 python datasets/waymo/waymo_download.py \
     --target_dir ./data/waymo/raw \
     --scene_ids 23 114 327 621 703 172 552 788

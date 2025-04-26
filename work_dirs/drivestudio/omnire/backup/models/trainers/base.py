@@ -686,13 +686,20 @@ class BasicTrainer(nn.Module):
         msg = super().load_state_dict(state_dict, strict)
         logger.info(f"BasicTrainer: {msg}")
 
-    def scene_edit(self, instance_ids):
+    def scene_edit(self, dataset, instance_ids):
         class_name = "RigidNodes"
-        model = self.models[class_name]
         if class_name not in self.models:
             logger.error(f"No such class named {class_name}")
         else:
+            model = self.models[class_name]
             model.remove_instances(instance_ids)
+
+        class_name = "Background"
+        add_rain = True
+        if add_rain:
+            model = self.models[class_name]
+            init_pose = dataset.pixel_source.camera_data[0].cam_to_worlds[0]
+            model.add_rain(init_pose)
 
     def resume_from_checkpoint(
         self,

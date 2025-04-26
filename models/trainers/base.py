@@ -25,6 +25,7 @@ class GSModelType(IntEnum):
     RigidNodes = 1
     SMPLNodes = 2
     DeformableNodes = 3
+    Rain = 4
 
 def lr_scheduler_fn(
     cfg: OmegaConf,
@@ -88,6 +89,7 @@ class BasicTrainer(nn.Module):
         self.gaussian_ctrl_general_cfg = gaussian_ctrl_general_cfg
         self.step = 0
         self.device = device
+        self.rainy = True
         
         # dataset infos
         self.num_train_images = num_train_images
@@ -694,9 +696,9 @@ class BasicTrainer(nn.Module):
             model = self.models[class_name]
             model.remove_instances(instance_ids)
 
-        class_name = "Background"
-        add_rain = True
-        if add_rain:
+        if self.rainy:
+            class_name = "Rain"
+            self.gaussian_classes["Rain"] = GSModelType.Rain
             model = self.models[class_name]
             init_pose = dataset.pixel_source.camera_data[0].cam_to_worlds[0]
             model.add_rain(init_pose)
