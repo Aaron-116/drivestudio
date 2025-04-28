@@ -46,7 +46,7 @@ class DeformableNodes(RigidNodes):
         delta_xyz, delta_quat, delta_scale = self.deform_network(x, t, nonrigid_embed)
         return delta_xyz, delta_quat, delta_scale
     
-    def get_gaussians(self, cam: dataclass_camera) -> Dict[str, torch.Tensor]:
+    def get_gaussians(self, cam: dataclass_camera, class_name = "Deformable") -> Dict[str, torch.Tensor]:
         filter_mask = torch.ones_like(self._means[:, 0], dtype=torch.bool)
         self.filter_mask = filter_mask
         

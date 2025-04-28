@@ -108,7 +108,7 @@ class DeformableGaussians(VanillaGaussians):
         delta_xyz, delta_quat, delta_scale = self.deform_network(normed_canonical_means.data, t + ast_noise)
         return delta_xyz, delta_quat, delta_scale
     
-    def get_gaussians(self, cam: dataclass_camera) -> Dict:
+    def get_gaussians(self, cam: dataclass_camera, class_name = "Deformgs") -> Dict:
         filter_mask = torch.ones_like(self._means[:, 0], dtype=torch.bool)
         self.filter_mask = filter_mask
         

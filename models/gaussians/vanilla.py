@@ -76,7 +76,9 @@ class VanillaGaussians(nn.Module):
         # 降雨参数
         self.diameter = torch.zeros(1, 1, device=self.device)
         self.velocity = torch.zeros(1, 1, device=self.device)
-        self.exposure_time = 0.01
+        self.direction = torch.zeros(1, 3, device=self.device)
+        self.exposure_time = 0.05
+        self.delta_t = 0.1
 
     @property
     def sh_degree(self):
@@ -390,7 +392,7 @@ class VanillaGaussians(nn.Module):
         dup_quats = self._quats[dup_mask]
         return dup_means, dup_feature_dc, dup_feature_rest, dup_opacities, dup_scales, dup_quats
 
-    def get_gaussians(self, cam: dataclass_camera) -> Dict:
+    def get_gaussians(self, cam: dataclass_camera, class_name="Not Rain") -> Dict:
         filter_mask = torch.ones_like(self._means[:, 0], dtype=torch.bool)
         self.filter_mask = filter_mask
 
@@ -405,18 +407,60 @@ class VanillaGaussians(nn.Module):
         else:
             rgbs = torch.sigmoid(colors[:, 0, :])
 
+        activated_means = self._means
         activated_opacities = self.get_opacity
         activated_scales = self.get_scaling
         activated_rotations = self.get_quats
-        actovated_colors = rgbs
+        activated_colors = rgbs
+
+        if class_name == 'Rain':
+            # 计算雨纹长度
+            length = self.get_length()
+            # 计算需要雨滴需要复制的次数，取整
+            num_duplication = torch.ceil(length / self.diameter).to(torch.int32)
+            # 取num_duplication中的最大值
+            max_duplication = torch.max(num_duplication).item()
+            n = max_duplication - 1
+            # 生成掩码，过滤掉原本复制次数小于max_duplication的雨滴
+            mask = (torch.arange(n, device=self.device)[:, None] < num_duplication).flatten()
+            # 计算偏移量，每次平移diameter/2, 直到所有雨滴都被复制完毕
+            # 生成形状为 (n, 1) 的偏移倍数
+            offset_multipliers = torch.arange(1, n+1, device=self.device).unsqueeze(
+                1)  # [n, 1]
+            # 形状为 (1, N) 的 diameter
+            diameters = self.diameter.unsqueeze(0)  # [1, N]
+
+            # 利用广播机制计算偏移量
+            offsets = offset_multipliers * diameters  # [n, N]
+            offsets = offsets.unsqueeze(-1)  # [n, N, 1]
+            # 沿着self.direction方向扩展雨滴的均值
+            direction = self.direction.unsqueeze(0)  # [1, 1, 3]
+            expanded_means = activated_means.unsqueeze(0)  # [1, N, 3]
+            expanded_means = expanded_means.repeat(n, 1, 1)  # [n, N, 3]
+            offsets = offsets * direction
+            expanded_means += offsets  # 广播偏移量
+            # 合并所有副本
+            activated_means = expanded_means.view(-1, 3)  # [n*N, 3]
+            activated_means = activated_means[mask]
+
+            # 其他属性
+            activated_opacities = activated_opacities.repeat(n, 1)
+            activated_opacities = activated_opacities[mask]
+            activated_scales = activated_scales.repeat(n, 1)
+            activated_scales = activated_scales[mask]
+            activated_rotations = activated_rotations.repeat(n, 1)
+            activated_rotations = activated_rotations[mask]
+            activated_colors = activated_colors.repeat(n, 1)
+            activated_colors = activated_colors[mask]
+            self.update_rain()
 
         # collect gaussians information
         gs_dict = dict(
-            _means=self._means[filter_mask],
-            _opacities=activated_opacities[filter_mask],
-            _rgbs=actovated_colors[filter_mask],
-            _scales=activated_scales[filter_mask],
-            _quats=activated_rotations[filter_mask],
+            _means=activated_means,
+            _opacities=activated_opacities,
+            _rgbs=activated_colors,
+            _scales=activated_scales,
+            _quats=activated_rotations,
         )
 
         # check nan and inf in gs_dict
@@ -494,19 +538,18 @@ class VanillaGaussians(nn.Module):
         add rain to the model
         """
         gaussian_dict = {}
-        mean_rgb = np.array([230, 230, 230]) / 255
+        mean_rgb = np.array([200, 200, 200]) / 255
         # 降雨区域, waymo coordinate system: x front, y left, z up
         x_min, x_max = 0, 40
         y_min, y_max = -10, 10
         z_min, z_max = -3, 17
         # 雨滴数量, 雨滴直径和速度
-        density = 4
+        density = 1
         num_points = (x_max - x_min) * (y_max - y_min) * (z_max - z_min) * density
-        diameter = torch.distributions.Gamma(6.648, 1/0.166).sample((num_points,)).to(self.device)
-        self.velocity = 3.197*torch.pow(diameter, 0.672)
+        diameter = torch.distributions.Gamma(6.648, 1 / 0.166).sample((num_points,)).to(self.device)
+        self.velocity = 3.197 * torch.pow(diameter, 0.672)
         self.diameter = diameter / 1000
-        # 假设曝光时间为10ms
-        self.exposure_time = 0.01
+        self.get_direction()
 
         # 生成平移量,直接生成三维均匀分布采样点（每行是一个三维点）
         low = torch.tensor([x_min, y_min, z_min], device=self.device)
@@ -517,9 +560,14 @@ class VanillaGaussians(nn.Module):
 
         # 生成缩放，创建一个和translation一样长度，和self.scales一样宽度的全1tensor
         gaussian_dict["scales"] = torch.ones((num_points, 3), dtype=torch.float32, device=self.device)
-        gaussian_dict["scales"][:, :2] = torch.tensor(self.diameter, dtype=torch.float32, device=self.device).view(-1, 1).repeat(1, 2)
-        streak_length = self.velocity * self.exposure_time
-        gaussian_dict["scales"][:, 2] = torch.tensor(streak_length, dtype=torch.float32, device=self.device)
+        gaussian_dict["scales"][:, :2] = torch.tensor(self.diameter, dtype=torch.float32, device=self.device).view(-1,
+                                                                                                                   1).repeat(
+            1, 2)
+        gaussian_dict["scales"][:, 2] = torch.where(
+            self.diameter < 1,
+            self.diameter,
+            self.diameter * (1.07 - 0.07 * self.diameter)
+        )
         gaussian_dict["scales"] = torch.log(gaussian_dict["scales"])
 
         # 生成旋转四元数
@@ -534,7 +582,9 @@ class VanillaGaussians(nn.Module):
 
         # 透明度
         opacities = self.diameter / (self.velocity * self.exposure_time)
-        gaussian_dict["opacities"] = torch.tensor(opacities, dtype=torch.float32, device=self.device).view(-1,1)
+        # 使用logit函数将opacities转换为[-1, 1]范围内的值，因为后面会用sigmoid函数处理
+        opacities = torch.logit(opacities)
+        gaussian_dict["opacities"] = torch.tensor(opacities, dtype=torch.float32, device=self.device).view(-1, 1)
 
         self._means = Parameter(gaussian_dict["means"])
         self._scales = Parameter(gaussian_dict["scales"])
@@ -542,3 +592,23 @@ class VanillaGaussians(nn.Module):
         self._features_dc = Parameter(gaussian_dict["features_dc"])
         self._features_rest = Parameter(gaussian_dict["features_rest"])
         self._opacities = Parameter(gaussian_dict["opacities"])
+
+    def update_rain(self) -> None:
+        # 计算位移
+        translation = self.direction * self.velocity.unsqueeze(1) * self.delta_t
+        # 更新位置
+        self._means += translation
+
+    def get_length(self) -> torch.Tensor:
+        # 单位为 m
+        return self.velocity * self.exposure_time
+
+    def get_direction(self) -> None:
+        # 提取四元数分量
+        w, x, y, z = self._quats[:, 0], self._quats[:, 1], self._quats[:, 2], self._quats[:, 3]
+        # 计算旋转矩阵
+        dir_z_x = 2 * (x * z + w * y)
+        dir_z_y = 2 * (y * z - w * x)
+        dir_z_z = -1 + 2 * (x * x + y * y)
+        self.direction = torch.stack([dir_z_x, dir_z_y, dir_z_z], dim=1)
+        self.direction / self.direction.norm(dim=-1, keepdim=True)

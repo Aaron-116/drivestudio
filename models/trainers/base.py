@@ -355,7 +355,7 @@ class BasicTrainer(nn.Module):
             "class_labels": [],
         }
         for class_name in self.gaussian_classes.keys():
-            gs = self.models[class_name].get_gaussians(cam)
+            gs = self.models[class_name].get_gaussians(cam, class_name)
             if gs is None:
                 continue
     
@@ -766,7 +766,7 @@ class BasicTrainer(nn.Module):
             "_rgbs": [],
             "_opacities": [],
         }
-        for class_name in ["Background"]:
+        for class_name in ["Background", "Rain"]:
             gs = self.models[class_name].get_gaussians(cam)
             if gs is None:
                 continue

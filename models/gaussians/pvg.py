@@ -371,7 +371,7 @@ class PeriodicVibrationGaussians(VanillaGaussians):
         dup_betas = self._betas[dup_mask]
         return dup_means, dup_feature_dc, dup_feature_rest, dup_opacities, dup_scales, dup_quats, dup_velocity, dup_taus, dup_betas
     
-    def get_gaussians(self, cam: dataclass_camera) -> Dict:
+    def get_gaussians(self, cam: dataclass_camera, class_name = "Pvg") -> Dict:
         # set time and smooth strategy
         scaled_train_t = self.normalized_timestamps[self.cur_frame] * self.train_time_scale # t2 in paper
         if self.training and (

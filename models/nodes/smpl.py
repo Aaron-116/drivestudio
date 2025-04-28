@@ -340,7 +340,7 @@ class SMPLNodes(RigidNodes):
         quats_container = quats_container.reshape(-1, 4)
         return means_container, quats_container
     
-    def get_gaussians(self, cam: dataclass_camera) -> Dict[str, torch.Tensor]:
+    def get_gaussians(self, cam: dataclass_camera, class_name = "Smpl") -> Dict[str, torch.Tensor]:
         filter_mask = torch.ones_like(self._means[:, 0], dtype=torch.bool)
         self.filter_mask = filter_mask
         # NOTE: hack here, need to consider a gaussian filter for efficient rendering

@@ -378,7 +378,7 @@ class RigidNodes(VanillaGaussians):
         _quats = self.quat_act(quats)
         return quat_mult(global_quats_per_pts, _quats)
 
-    def get_gaussians(self, cam: dataclass_camera) -> Dict[str, torch.Tensor]:
+    def get_gaussians(self, cam: dataclass_camera, class_name = "Rigid") -> Dict[str, torch.Tensor]:
         filter_mask = torch.ones_like(self._means[:, 0], dtype=torch.bool)
         self.filter_mask = filter_mask
         # NOTE: hack here, need to consider a gaussian filter for efficient rendering
